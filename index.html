@@ -278,7 +278,28 @@ textarea.field{resize:vertical;min-height:85px}
 .disclaimer-sheet h3{font-size:13px;font-weight:700;color:var(--blue);margin:.8rem 0 .3rem}
 .disclaimer-sheet p{font-size:12px;color:#444;line-height:1.75;margin-bottom:.35rem}
 .disclaimer-sheet .art-box{background:#f0f5fb;border-left:3px solid var(--blue-mid);border-radius:0 8px 8px 0;padding:.5rem .7rem;font-size:11px;color:#333;line-height:1.6;margin:.4rem 0}
-/* ── MOBILE FIRST ── */
+/* ── LIVE INDICATOR ── */
+.live-bar{background:linear-gradient(90deg,#0c447c,#1a5ea0);color:#fff;padding:.45rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;font-size:11px;max-width:760px;margin:0 auto}
+.live-dot{width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;animation:pulse-live 1.8s infinite}
+@keyframes pulse-live{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+.live-label{display:flex;align-items:center;gap:.5rem;font-weight:600;letter-spacing:.3px}
+.live-status{font-size:10px;opacity:.7;font-style:italic}
+.scan-btn{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:20px;padding:.28rem .85rem;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:.4rem;white-space:nowrap}
+.scan-btn:active{background:rgba(255,255,255,.28)}
+.scan-btn.scanning{opacity:.7;pointer-events:none}
+
+/* TOAST notificaciones */
+.toast-wrap{position:fixed;top:100px;right:1rem;z-index:500;display:flex;flex-direction:column;gap:.45rem;pointer-events:none}
+.toast{background:#1a1a2e;color:#fff;border-radius:12px;padding:.55rem .85rem;font-size:12px;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,.25);display:flex;align-items:center;gap:.5rem;pointer-events:none;animation:toast-in .3s ease;max-width:260px;border-left:3px solid #4ade80}
+.toast.error{border-left-color:#e24b4a}
+.toast.info{border-left-color:#378add}
+@keyframes toast-in{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+/* SCANNING overlay en cards */
+.scanning-overlay{position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(55,138,221,.08) 50%,transparent 100%);background-size:200% 100%;animation:scan-sweep 1.5s infinite;border-radius:var(--radius);pointer-events:none}
+@keyframes scan-sweep{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* MOBILE FIRST ── */
 html{font-size:15px}
 
 /* Evita que el contenido quede bajo el header en todos los tamaños */
@@ -388,6 +409,18 @@ button,a,.chip,.bnav-item{min-height:36px}
 <!-- ══ MAIN ══ -->
 <div id="screenMain" class="screen active page-content">
   <div id="tabDenuncias">
+    <!-- LIVE BAR -->
+    <div class="live-bar inner" id="liveBar">
+      <div class="live-label">
+        <div class="live-dot" id="liveDot"></div>
+        <span id="liveLabel">IA monitoreando noticias bolivianas</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:.6rem">
+        <span class="live-status" id="liveStatus">Última revisión: ahora</span>
+        <button class="scan-btn" id="scanBtn" onclick="escanearAhora()">&#129302; Escanear ahora</button>
+      </div>
+    </div>
+
     <div class="mision-strip inner">
       <div class="mision-inner">
         <div class="mision-icon">&#128269;</div>
@@ -490,6 +523,9 @@ button,a,.chip,.bnav-item{min-height:36px}
     </div>
   </div>
 </div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-wrap" id="toastWrap"></div>
 
 <!-- ══ BOTTOM NAV ══ -->
 <div class="bottom-nav" id="bottomNav">
@@ -1048,6 +1084,39 @@ function verPolitico(nombre){
     </div>`;
   showScreen("profile");
   if(!ref.bio||ref.bio.length<50)buscarBioPublica(nombre,ref.cargo||"",ref.partido);
+}
+function buscarFotoPublica(nombre, cargo, partido) {
+  return fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 400,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: `Busca una foto oficial de "${nombre}", político boliviano. Dame SOLO la URL directa a una imagen JPG/PNG/WEBP. Si no hay, responde: NOFOTO` }]
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    const url = data.content.map(i => i.type === "text" ? i.text : "").join("").trim();
+    if (url && url !== "NOFOTO" && url.startsWith("http") && /\.(jpg|jpeg|png|webp)/i.test(url)) return url;
+    return "";
+  })
+  .catch(() => "");
+}
+
+function cargarFotosDenuncias() {
+  const sinFoto = denuncias.filter(d => d.estado === "publicado" && !d.foto);
+  if (!sinFoto.length) return;
+  // Procesar de a uno con delay para no saturar
+  sinFoto.slice(0, 8).reduce((chain, d) => {
+    return chain.then(() => {
+      return buscarFotoPublica(d.politico, d.cargo, d.partido).then(url => {
+        if (url) denuncias.filter(x => x.politico === d.politico).forEach(x => x.foto = url);
+        renderLista();
+      });
+    }).then(() => new Promise(r => setTimeout(r, 900)));
+  }, Promise.resolve());
 }
 async function buscarBioPublica(nombre,cargo,partido){
   try{
@@ -1704,6 +1773,125 @@ function abrirDisclaimer(seccion="aviso"){
   document.getElementById("disclaimerModal").classList.add("open");
 }
 function cerrarDisclaimer(){document.getElementById("disclaimerModal").classList.remove("open");}
+
+// ══════════════════════════════════════
+// LIVE SYSTEM — indicador, toasts, escaneo automático
+// ══════════════════════════════════════
+let lastScan=new Date();
+let scanInterval=null;
+let isScanning=false;
+
+function toast(msg, type="success", duration=3500){
+  const w=document.getElementById("toastWrap");
+  const t=document.createElement("div");
+  t.className=`toast ${type==="error"?"error":type==="info"?"info":""}`;
+  t.innerHTML=`<span>${type==="success"?"✅":type==="error"?"⚠️":"ℹ️"}</span>${msg}`;
+  w.appendChild(t);
+  setTimeout(()=>{t.style.animation="toast-in .3s ease reverse";setTimeout(()=>t.remove(),300);},duration);
+}
+
+function updateLiveStatus(){
+  const now=new Date();
+  const diff=Math.round((now-lastScan)/1000);
+  const el=document.getElementById("liveStatus");
+  if(!el)return;
+  if(isScanning){el.textContent="Escaneando medios bolivianos...";return;}
+  if(diff<60)el.textContent="Última revisión: hace "+diff+"s";
+  else if(diff<3600)el.textContent="Última revisión: hace "+Math.round(diff/60)+"min";
+  else el.textContent="Última revisión: hace "+Math.round(diff/3600)+"h";
+}
+
+function setScanning(active){
+  isScanning=active;
+  const btn=document.getElementById("scanBtn");
+  const dot=document.getElementById("liveDot");
+  const lbl=document.getElementById("liveLabel");
+  if(!btn)return;
+  if(active){
+    btn.classList.add("scanning");
+    btn.innerHTML="&#9679; Escaneando...";
+    dot.style.background="#facc15";
+    lbl.textContent="Revisando "+["Página Siete","El Deber","Los Tiempos","Unitel","Red Uno","ANF"][Math.floor(Math.random()*6)]+"...";
+  }else{
+    btn.classList.remove("scanning");
+    btn.innerHTML="&#129302; Escanear ahora";
+    dot.style.background="#4ade80";
+    lbl.textContent="IA monitoreando noticias bolivianas";
+    lastScan=new Date();
+  }
+  updateLiveStatus();
+}
+
+async function escanearAhora(){
+  if(isScanning)return;
+  setScanning(true);
+  toast("Escaneando medios bolivianos en busca de denuncias...","info",4000);
+
+  try{
+    const res=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514",
+        max_tokens:1200,
+        tools:[{type:"web_search_20250305",name:"web_search"}],
+        messages:[{role:"user",content:`Busca denuncias o acusaciones políticas de Bolivia de las últimas 24 horas en paginasiete.bo, eldeber.com.bo, lostiempos.com, unitel.bo, reduno.com.bo. SOLO JSON sin markdown: [{"titulo":"...","politico":"nombre completo","partido":"MAS/CC/APB/Creemos/UCS/MNR/Otro","cargo":"cargo actual","descripcion":"2 oraciones precisas","fuente_url":"URL real y completa de la nota","pruebas":bool,"formal":bool,"seguimiento":bool,"resultado":bool,"resumen_ia":"análisis breve show vs verdad"}]. Máximo 3 resultados.`}]
+      })
+    });
+    const data=await res.json();
+    const txt=data.content.map(i=>i.type==="text"?i.text:"").join("").trim();
+    const arr=JSON.parse(txt.replace(/```json|```/g,"").trim());
+
+    let nuevas=0;
+    arr.forEach(r=>{
+      if(!r.politico||!r.descripcion)return;
+      // Evitar duplicados por político+descripción similar
+      const existe=denuncias.some(d=>d.politico===r.politico&&d.descripcion.slice(0,40)===r.descripcion.slice(0,40));
+      if(existe)return;
+      denuncias.unshift({
+        id:Date.now()+Math.random(),
+        politico:r.politico||"Desconocido",
+        partido:PARTIDOS.includes(r.partido)?r.partido:"Otro",
+        cargo:r.cargo||"",bio:"",foto:"",
+        descripcion:r.descripcion||r.titulo,
+        fuente:r.fuente_url||"",
+        criterios:{pruebas:!!r.pruebas,formal:!!r.formal,seguimiento:!!r.seguimiento,resultado:!!r.resultado},
+        fecha:new Date().toISOString().split("T")[0],
+        aiResumen:r.resumen_ia||"",
+        redes:{twitter:"",facebook:""},
+        estado:"pendiente",replica:null,
+        log:[{t:now(),accion:"Detectado automáticamente por IA — pendiente revisión"}]
+      });
+      nuevas++;
+    });
+
+    setScanning(false);
+    renderStats();renderLista();
+
+    if(nuevas>0){
+      toast(`${nuevas} denuncia${nuevas>1?"s":""} nueva${nuevas>1?"s":""} detectada${nuevas>1?"s":""}. ${isEditor?"":"Pendiente de revisión editorial."}`, "success", 5000);
+      addAlerta(`IA detectó ${nuevas} denuncia${nuevas>1?"s":""} nueva${nuevas>1?"s":""} en medios bolivianos.`);
+    }else{
+      toast("Sin denuncias nuevas en este momento.","info",3000);
+    }
+
+  }catch(e){
+    setScanning(false);
+    toast("Error al escanear. Revisá tu conexión.","error");
+  }
+}
+
+// Escaneo automático cada 30 minutos
+function iniciarEscaneoAutomatico(){
+  setInterval(()=>{
+    if(!isScanning && document.getElementById("screenMain")?.classList.contains("active")){
+      escanearAhora();
+    }
+  }, 30*60*1000);
+}
+
+// Reloj de "última revisión" actualiza cada 15s
+setInterval(updateLiveStatus, 15000);
 
 // ══════════════════════════════════════
 // INIT
